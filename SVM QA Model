@@ -1,0 +1,91 @@
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from scipy.sparse import hstack
+from nltk import pos_tag, word_tokenize
+
+
+#Load and preprocess the training data
+def load_training_data(file_path):
+    data = np.load(file_path, allow_pickle=True)
+    sentences = [item['question'] for item in data]
+    answers = [item['answer'] for item in data]
+    distractors = [str(item['distractor1']) + " " + str(item['distractor2']) + " " + str(item['distractor(unsure)']) for item in data]
+
+    labels = [item['label'] for item in data]
+    choice_list = [item['choice_list'] for item in data]
+    choice_order = [item['choice_order'] for item in data]
+    return sentences, answers, distractors, labels, choice_list, choice_order
+
+#BoW features with TF-IDF
+def generate_tfidf_features(sentences):
+    vectorizer = TfidfVectorizer(lowercase=True, stop_words="english")
+    tfidf_features = vectorizer.fit_transform(sentences)
+    return tfidf_features
+
+#POS tagging
+def generate_pos_features(sentences):
+    tokenized_sentences = [word_tokenize(sentence) for sentence in sentences]
+    pos_sequences = [" ".join(tag for _, tag in pos_tag(tokens)) for tokens in tokenized_sentences]
+    vectorizer = TfidfVectorizer()
+    pos_features = vectorizer.fit_transform(pos_sequences)
+    return pos_features
+
+#Concatenate Answer, Question, and Distractor features
+def combine_question_answer_distractor_features(question, answer, distractors):
+    combined = [q + " " + a + " " + d for q, a, d in zip(question, answer, distractors)]
+    combined_features = generate_tfidf_features(combined)
+    return combined_features
+
+#Combine all features
+def combine_all_features(tfidf_features, pos_features, combined_features):
+    return hstack([tfidf_features, pos_features, combined_features])
+
+#Train SVM classifier
+def train_svm(features, labels):
+    classifier = SVC(kernel='linear', probability=True)
+    classifier.fit(features, labels)
+    return classifier
+
+#main execution section
+
+#Load data
+file_path = "sp-train.npy"
+sentences, answers, distractors, labels, choice_list, choice_order = load_training_data(file_path)
+
+#Encode labels
+label_encoder = LabelEncoder()
+encoded_labels = label_encoder.fit_transform(labels)
+
+#Generate features
+#TF-IDF Features
+tfidf_features = generate_tfidf_features(sentences)
+
+#POS Features
+pos_features = generate_pos_features(sentences)
+
+#Combine question, answer, and distractors into a feature
+combined_features = combine_question_answer_distractor_features(sentences, answers, distractors)
+
+#Combine all features
+final_features = combine_all_features(tfidf_features, pos_features, combined_features)
+
+#Split into train/test sets
+X_train, X_test, y_train, y_test = train_test_split(final_features, encoded_labels, test_size=0.2, random_state=36)
+
+#Train SVM
+svm_classifier = train_svm(X_train, y_train)
+
+#make predictions
+predictions = svm_classifier.predict(X_test)
+
+# Count the number of correct predictions
+correct_guesses = (predictions == y_test).sum()
+total_guesses = len(y_test)
+
+# Print the results: number of correct guesses and total guesses
+print(f"Total guesses: {total_guesses}")
+print(f"Correct guesses: {correct_guesses}")
+print(f"Accuracy: {correct_guesses / total_guesses:.2f}")
